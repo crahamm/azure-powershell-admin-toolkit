@@ -27,6 +27,7 @@ Install PowerShell modules as needed:
 ```powershell
 Install-Module Az.Accounts -Scope CurrentUser
 Install-Module Az.Resources -Scope CurrentUser
+Install-Module Az.Compute -Scope CurrentUser
 ```
 
 Authenticate before running scripts that call Azure:
@@ -45,19 +46,22 @@ If a script accepts `-SubscriptionId`, prefer passing it explicitly when running
 
 ### `scripts/Get-AzResourceInventory.ps1`
 
-Builds a structured inventory report for Azure resources in the current subscription, a specified subscription, or a specific resource group.
+Lists Azure resources in the current subscription, a specified subscription, or a specific resource group.
 
-The script returns a report containing:
+The default console output includes:
 
-- `Metadata`: generation time, tenant ID, subscription ID, subscription name, scan scope, resource group, and resource count.
-- `Summary`: counts grouped by resource group, resource type, and Azure location.
-- `Resources`: normalized resource records with common fields such as name, resource group, type, location, subscription ID, resource ID, kind, SKU, and tags.
+- `Name`: resource name.
+- `Type`: friendly resource type name.
+- `Region`: Azure region.
+- `ResourceGroup`: resource group name.
+- `Tags`: resource tags.
+- `CreationDate`: best-effort creation date when Azure exposes it for the resource type.
 
 Supported output formats:
 
 - `Object`: returns a PowerShell object for pipeline use.
-- `Json`: returns the full report as JSON.
-- `Csv`: returns resource rows as CSV. Complex fields such as tags and expanded properties are serialized into compact JSON strings.
+- `Json`: returns resource rows as JSON.
+- `Csv`: returns resource rows as CSV.
 
 Key parameters:
 
@@ -65,7 +69,6 @@ Key parameters:
 - `-ResourceGroupName`: limits inventory collection to a single resource group.
 - `-OutputFormat`: controls output format. Valid values are `Object`, `Json`, and `Csv`.
 - `-OutputPath`: writes output to a file instead of the pipeline.
-- `-IncludeProperties`: includes expanded resource properties. This can significantly increase report size and may expose additional operational metadata.
 
 Examples:
 
@@ -73,7 +76,7 @@ Examples:
 ./scripts/Get-AzResourceInventory.ps1
 ```
 
-Returns an inventory report for the current Azure context subscription.
+Returns inventory rows for the current Azure context subscription.
 
 ```powershell
 ./scripts/Get-AzResourceInventory.ps1 `
@@ -82,7 +85,7 @@ Returns an inventory report for the current Azure context subscription.
     -OutputPath './inventory.json'
 ```
 
-Scans a specific subscription and writes the full report to JSON.
+Scans a specific subscription and writes inventory rows to JSON.
 
 ```powershell
 ./scripts/Get-AzResourceInventory.ps1 `
@@ -99,7 +102,68 @@ Required permissions:
 
 Security note:
 
-- Inventory output can include sensitive operational metadata such as resource names, tags, locations, SKUs, and expanded properties. Do not commit generated reports to the repository.
+- Inventory output can include sensitive operational metadata such as resource names, resource group names, tags, and creation dates. Do not commit generated reports to the repository.
+
+### `scripts/Find-UnusedDisks.ps1`
+
+Finds unattached Azure managed disks that may be generating unnecessary costs.
+
+The default console output includes:
+
+- `DiskName`: managed disk name.
+- `SizeGB`: provisioned disk size in GiB.
+- `ResourceGroup`: resource group name.
+
+Supported output formats:
+
+- `Object`: returns PowerShell objects for pipeline use.
+- `Json`: returns report rows as JSON.
+- `Csv`: returns report rows as CSV.
+
+Key parameters:
+
+- `-SubscriptionId`: scans a specific Azure subscription. If omitted, the current Az context subscription is used.
+- `-ResourceGroupName`: limits disk discovery to a single resource group.
+- `-Delete`: deletes the unattached disks found by the scan.
+- `-OutputFormat`: controls output format. Valid values are `Object`, `Json`, and `Csv`.
+- `-OutputPath`: writes output to a file instead of the pipeline.
+
+Examples:
+
+```powershell
+./scripts/Find-UnusedDisks.ps1
+```
+
+Reports unattached managed disks in the current Azure context subscription.
+
+```powershell
+./scripts/Find-UnusedDisks.ps1 -ResourceGroupName 'Lab-RG'
+```
+
+Reports unattached managed disks in one resource group.
+
+```powershell
+./scripts/Find-UnusedDisks.ps1 -Delete -WhatIf
+```
+
+Shows which unattached managed disks would be deleted without deleting them.
+
+```powershell
+./scripts/Find-UnusedDisks.ps1 `
+    -OutputFormat Csv `
+    -OutputPath './unused-disks.csv'
+```
+
+Writes the cleanup report to a CSV file.
+
+Required permissions:
+
+- Reader access at the target subscription or resource group scope is typically sufficient for reporting.
+- Deleting disks requires delete permissions, such as Disk Delete or Contributor, at the target scope.
+
+Safety note:
+
+- The script is report-only by default. Use `-Delete -WhatIf` before deleting disks, and verify that reported disks are not needed for recovery, backup, forensic, or migration workflows.
 
 ## Usage Guidance
 
@@ -114,20 +178,22 @@ Security note:
 When changing or adding scripts, validate syntax before use:
 
 ```powershell
-$tokens = $null
-$errors = $null
-[System.Management.Automation.Language.Parser]::ParseFile(
-    './scripts/Get-AzResourceInventory.ps1',
-    [ref]$tokens,
-    [ref]$errors
-) | Out-Null
-$errors
+Get-ChildItem ./scripts/*.ps1 | ForEach-Object {
+    $tokens = $null
+    $errors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile(
+        $_.FullName,
+        [ref]$tokens,
+        [ref]$errors
+    ) | Out-Null
+    $errors
+}
 ```
 
 If `PSScriptAnalyzer` is installed, run it before committing script changes:
 
 ```powershell
-Invoke-ScriptAnalyzer -Path ./scripts/Get-AzResourceInventory.ps1 -Severity Warning,Error
+Invoke-ScriptAnalyzer -Path ./scripts -Recurse -Severity Warning,Error
 ```
 
 ## License
